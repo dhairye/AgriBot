@@ -91,6 +91,7 @@ class CloudflareLLMService:
         economic_context: Optional[str] = None,
         market_context: Optional[str] = None,
         chemical_context: Optional[str] = None,
+        startup_context: Optional[str] = None,
         history: List[Dict] = [],
         memory_state: Optional[Dict] = None
     ) -> LLMResponse:
@@ -110,7 +111,15 @@ Exactly 3-5 Conversational answer sentences. Explain the "why" briefly. Avoid bu
 </voice_summary>
 
 <full_response>
-Give 1–2 cohesive paragraphs (no bullet lists) that weave together the weather, satellite, and research context. Sound like an expert friend from Yolo County. Keep it specific and practical. Include [Source: ...] inline for any facts drawn from research. Avoid Markdown lists unless absolutely necessary.
+Give a comprehensive, highly structured response that weaves together the weather, satellite, and research context. Sound like an expert friend from Yolo County, but format your response like a high-quality ChatGPT answer.
+Use RICH MARKDOWN formatting:
+- Use `##` or `###` for clear semantic headings.
+- Use **bold** text for key metrics, important actions, or emphasis.
+- Use bullet points (`-`) or numbered lists for steps, options, or multiple recommendations.
+- Insert markdown tables ONLY if presenting structured comparative data (like chemical application rates, GDD stages, or market prices).
+- DO NOT use any emojis.
+- Include [Source: ...] inline for facts drawn from research.
+- **CRITICAL**: END your response with a single, relevant, engaging follow-up question to keep the conversation going.
 </full_response>
 
 <sources>
@@ -128,7 +137,8 @@ CRITICAL RULES:
    - "Where in Yolo?": Recommend specific zones (e.g. "Capay Valley for organic...", "Clarksburg for grapes...") based on RAG knowledge.
    - "When to plant/harvest?": Use GDD and current soil moisture data to justify the timing.
 4. Voice summary should feel like you're speaking directly to the grower, not as a generic AI.
-5. DO NOT hallucinate. DO NOT REPLY WRONG ANSWERS INSTEAD ADMIT YOU DONT KNOW. 
+5. If the User asks for local startups, companies, or services (e.g., "suggest me companies", "who sells...", "which startup..."), carefully check the LOCAL STARTUPS context and recommend the top matches.
+6. DO NOT hallucinate. DO NOT REPLY WRONG ANSWERS INSTEAD ADMIT YOU DONT KNOW. 
 """
 
         # Format history (last 8 turns for better memory)
@@ -183,6 +193,9 @@ RESEARCH (Guidelines):
 
 ECONOMIC:
 {economic_context or 'N/A'}
+
+LOCAL STARTUPS (Yolo County):
+{startup_context or 'N/A'}
 """
 
         try:
@@ -234,46 +247,42 @@ I've analyzed the field data for {crop or 'your crop'}. Verification of satellit
 """
             
         try:
-            # Parse XML-like Tags
+            import re
             voice_summary = ""
-            full_response = ""
+            full_response = response_text
             sources = []
 
             # Extract Voice Summary
-            v_start = response_text.find("<voice_summary>")
-            v_end = response_text.find("</voice_summary>")
-            if v_start != -1 and v_end != -1:
-                voice_summary = response_text[v_start + 15 : v_end].strip()
+            v_match = re.search(r'<voice_summary>(.*?)</voice_summary>', response_text, re.DOTALL | re.IGNORECASE)
+            if v_match:
+                voice_summary = v_match.group(1).strip()
             
-            # Extract Full Response
-            f_start = response_text.find("<full_response>")
-            f_end = response_text.find("</full_response>")
-            if f_start != -1 and f_end != -1:
-                full_response = response_text[f_start + 15 : f_end].strip()
-            
-            # Extract Sources
-            s_start = response_text.find("<sources>")
-            s_end = response_text.find("</sources>")
-            if s_start != -1 and s_end != -1:
-                sources_text = response_text[s_start + 9 : s_end].strip()
+            # Extract Sources (Handle multiple <sources> tags if the LLM hallucinated them)
+            s_matches = re.finditer(r'<sources?>(.*?)</sources?>', response_text, re.DOTALL | re.IGNORECASE)
+            for s_match in s_matches:
+                sources_text = s_match.group(1).strip()
                 if sources_text:
-                    sources = [s.strip() for s in sources_text.split('\\n') if s.strip()]
+                    sources.extend([s.strip() for s in sources_text.split('\n') if s.strip()])
 
-            # Fallback if parsing failed completely
-            if not full_response:
-                full_response = response_text
-                # strip tags if they exist but were malformed
-                full_response = full_response.replace("<full_response>", "").replace("</full_response>", "")
-            
+            # Extract Full Response
+            f_match = re.search(r'<full_response>(.*?)</full_response>', response_text, re.DOTALL | re.IGNORECASE)
+            if f_match:
+                full_response = f_match.group(1).strip()
+
+            # ERADICATE ANY LEAKING TAGS AND THEIR CONTENT FROM THE FINAL TEXT
+            full_response = re.sub(r'<voice_summary>.*?</voice_summary>', '', full_response, flags=re.DOTALL | re.IGNORECASE)
+            full_response = re.sub(r'<sources?>.*?</sources?>', '', full_response, flags=re.DOTALL | re.IGNORECASE)
+            full_response = re.sub(r'</?full_response>', '', full_response, flags=re.IGNORECASE).strip()
+
             if not voice_summary:
                 voice_summary = full_response[:300] + "..."
 
-            print(f"DEBUG: Final LLM Response Text:\n{response_text}\n")
+            print(f"DEBUG: Final LLM Response Text:\n{full_response}\n")
             return LLMResponse(
                 text=full_response,
                 voice_summary=voice_summary,
                 sources=sources,
-                confidence=0.9
+                confidence=0.85
             )
         except Exception as e:
             print(f"LLM Parse Error: {e}")
@@ -298,11 +307,12 @@ Return ONLY valid JSON with these fields:
 - crop: one of [almonds, tomatoes, grapes, rice, pistachios, walnuts, unknown]
 - question_type: [pest, disease, irrigation, weather, harvest, planting, market, chemical, math, general]
 - optimization_target: [none, time, location, resource]
+- optimization_target: [none, time, location, resource]
     - "Where is the best place to...?" -> location
     - "When should I...?" -> time
     - "How much water...?" -> resource
 - location_address: Extract specific address/city. null if generic.
-- is_agricultural: boolean
+- is_agricultural: boolean (MUST BE TRUE for any farm, crop, weather, chemical, irrigation, pest, soil, or spray-related questions)
 - urgency: [immediate, this_week, planning]
 - keywords: list of terms"""
 
@@ -406,12 +416,13 @@ async def generate_response(
     economic: Optional[str] = None,
     market: Optional[str] = None,
     chemical: Optional[str] = None,
+    startup: Optional[str] = None,
     history: List[Dict] = [],
     memory_state: Optional[Dict] = None
 ) -> LLMResponse:
     """Convenience function for agricultural response generation."""
     return await llm_service.generate_agricultural_response(
-        query, crop, weather, satellite, rag, economic, market, chemical, history, memory_state
+        query, crop, weather, satellite, rag, economic, market, chemical, startup, history, memory_state
     )
 
 

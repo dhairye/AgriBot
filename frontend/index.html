@@ -2,13 +2,47 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" href="/AgriBot.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AgriBot | Intelligent Farm Assistant</title>
     <meta
       name="description"
       content="Expert agricultural decision support for Yolo County, CA farmers. Powered by Satellite Imagery & UC Research."
     />
+    
+    <!-- iOS Add to Home Screen Support -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="AgriBot" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    
+    <script>
+      (function() {
+        var urlParams = new URLSearchParams(window.location.search);
+        var link = document.createElement('link');
+        link.rel = 'manifest';
+        if (urlParams.has('api_url')) {
+          var manifest = {
+            "name": "AgriBot | Intelligent Farm Assistant",
+            "short_name": "AgriBot",
+            "display": "standalone",
+            "start_url": window.location.href,
+            "background_color": "#0f172a",
+            "theme_color": "#0f172a",
+            "icons": [
+              { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+              { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" }
+            ]
+          };
+          var blob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
+          link.href = URL.createObjectURL(blob);
+        } else {
+          link.href = '/manifest.json';
+        }
+        document.head.appendChild(link);
+      })();
+    </script>
+
     <meta property="og:title" content="AgriBot | Intelligent Farm Assistant" />
     <meta
       property="og:description"
